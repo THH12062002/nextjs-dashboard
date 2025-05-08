@@ -7,7 +7,7 @@ import {
   Revenue,
 } from "./definitions";
 import { formatCurrency } from "./utils";
-import { sql } from "@/app/lib/db";
+import { sqlWithInit } from "@/app/lib/db";
 import { unstable_noStore as noStore } from "next/cache";
 
 export async function fetchRevenue() {
@@ -15,14 +15,10 @@ export async function fetchRevenue() {
   try {
     // Artificially delay a response for demo purposes.
     // Don't do this in production :)
-
     console.log("Fetching revenue data...");
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    const data = await sql<Revenue[]>`SELECT * FROM revenue`;
-
-    console.log("Data fetch completed after 3 seconds.");
-
+    const data = await sqlWithInit<Revenue>`SELECT * FROM revenue`;
     return data;
   } catch (error) {
     console.error("Database Error:", error);
@@ -31,9 +27,8 @@ export async function fetchRevenue() {
 }
 
 export async function fetchLatestInvoices() {
-  noStore();
   try {
-    const data = await sql<LatestInvoiceRaw[]>`
+    const data = await sqlWithInit<LatestInvoiceRaw>`
       SELECT invoices.amount, customers.name, customers.image_url, customers.email, invoices.id
       FROM invoices
       JOIN customers ON invoices.customer_id = customers.id
@@ -47,7 +42,7 @@ export async function fetchLatestInvoices() {
     return latestInvoices;
   } catch (error) {
     console.error("Database Error:", error);
-    return [];
+    throw new Error("Failed to fetch the latest invoices.");
   }
 }
 
@@ -57,9 +52,13 @@ export async function fetchCardData() {
     // You can probably combine these into a single SQL query
     // However, we are intentionally splitting them to demonstrate
     // how to initialize multiple queries in parallel with JS.
-    const invoiceCountPromise = sql`SELECT COUNT(*) FROM invoices`;
-    const customerCountPromise = sql`SELECT COUNT(*) FROM customers`;
-    const invoiceStatusPromise = sql`
+    const invoiceCountPromise = sqlWithInit<{
+      count: string;
+    }>`SELECT COUNT(*) FROM invoices`;
+    const customerCountPromise = sqlWithInit<{
+      count: string;
+    }>`SELECT COUNT(*) FROM customers`;
+    const invoiceStatusPromise = sqlWithInit<{ paid: number; pending: number }>`
       SELECT
         SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS "paid",
         SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS "pending"
@@ -102,7 +101,7 @@ export async function fetchFilteredInvoices(
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
   try {
-    const invoices = await sql<InvoicesTable[]>`
+    const invoices = await sqlWithInit<InvoicesTable>`
       SELECT
         invoices.id,
         invoices.amount,
@@ -132,7 +131,7 @@ export async function fetchFilteredInvoices(
 
 export async function fetchInvoicesPages(query: string) {
   try {
-    const data = await sql`SELECT COUNT(*)
+    const data = await sqlWithInit<{ count: string }>`SELECT COUNT(*)
     FROM invoices
     JOIN customers ON invoices.customer_id = customers.id
     WHERE
@@ -153,33 +152,36 @@ export async function fetchInvoicesPages(query: string) {
 
 export async function fetchInvoiceById(id: string) {
   try {
-    const data = await sql<InvoiceForm[]>`
+    const data = await sqlWithInit<InvoiceForm>`
       SELECT
         invoices.id,
         invoices.customer_id,
         invoices.amount,
-        invoices.status
+        invoices.status,
+        customers.name,
+        customers.email,
+        customers.image_url
       FROM invoices
+      JOIN customers ON invoices.customer_id = customers.id
       WHERE invoices.id = ${id};
     `;
 
-    const invoice = data.map((invoice) => ({
-      ...invoice,
-      // Convert amount from cents to dollars
-      amount: invoice.amount / 100,
-    }));
+    if (!data || data.length === 0) {
+      console.error("No invoice found with id:", id);
+      return null;
+    }
 
-    console.log(invoice);
-    return invoice[0];
+    console.log("Fetched invoice:", data[0]);
+    return data[0];
   } catch (error) {
-    console.error("Database Error:", error);
+    console.error("Database Error in fetchInvoiceById:", error);
     throw new Error("Failed to fetch invoice.");
   }
 }
 
 export async function fetchCustomers() {
   try {
-    const customers = await sql<CustomerField[]>`
+    const customers = await sqlWithInit<CustomerField>`
       SELECT
         id,
         name
@@ -196,7 +198,7 @@ export async function fetchCustomers() {
 
 export async function fetchFilteredCustomers(query: string) {
   try {
-    const data = await sql<CustomersTableType[]>`
+    const data = await sqlWithInit<CustomersTableType>`
 		SELECT
 		  customers.id,
 		  customers.name,

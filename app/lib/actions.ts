@@ -51,17 +51,16 @@ export async function createInvoice(prevState: State, formData: FormData) {
 
   // Prepare data for insertion into the database
   const { customerId, amount, status } = validatedFields.data;
-  const amountInCents = amount * 100;
   const date = new Date().toISOString().split("T")[0];
 
   // Insert data into the database
   try {
     await sql`
       INSERT INTO invoices (customer_id, amount, status, date)
-      VALUES (${customerId}, ${amountInCents}, ${status}, ${date})
+      VALUES (${customerId}, ${amount}, ${status}, ${date})
     `;
   } catch (error) {
-    // If a database error occurs, return a more specific error.
+    console.error("Database Error:", error);
     return {
       message: "Database Error: Failed to Create Invoice.",
     };
@@ -77,6 +76,9 @@ export async function updateInvoice(
   prevState: State,
   formData: FormData
 ) {
+  console.log("Updating invoice with id:", id);
+  console.log("Form data:", Object.fromEntries(formData.entries()));
+
   const validatedFields = UpdateInvoice.safeParse({
     customerId: formData.get("customerId"),
     amount: formData.get("amount"),
@@ -84,6 +86,7 @@ export async function updateInvoice(
   });
 
   if (!validatedFields.success) {
+    console.error("Validation failed:", validatedFields.error);
     return {
       errors: validatedFields.error.flatten().fieldErrors,
       message: "Missing Fields. Failed to Update Invoice.",
@@ -91,15 +94,29 @@ export async function updateInvoice(
   }
 
   const { customerId, amount, status } = validatedFields.data;
-  const amountInCents = amount * 100;
+
+  console.log("Updating with values:", {
+    customerId,
+    amount,
+    status,
+  });
 
   try {
-    await sql`
+    const result = await sql`
       UPDATE invoices
-      SET customer_id = ${customerId}, amount = ${amountInCents}, status = ${status}
+      SET customer_id = ${customerId}, amount = ${amount}, status = ${status}
       WHERE id = ${id}
+      RETURNING id
     `;
+
+    console.log("Update result:", result);
+
+    if (!result || result.length === 0) {
+      console.error("No invoice was updated");
+      return { message: "Failed to update invoice. Invoice not found." };
+    }
   } catch (error) {
+    console.error("Database Error in updateInvoice:", error);
     return { message: "Database Error: Failed to Update Invoice." };
   }
 
@@ -108,8 +125,13 @@ export async function updateInvoice(
 }
 
 export async function deleteInvoice(id: string) {
-  await sql`DELETE FROM invoices WHERE id = ${id}`;
-  revalidatePath("/dashboard/invoices");
+  try {
+    await sql`DELETE FROM invoices WHERE id = ${id}`;
+    revalidatePath("/dashboard/invoices");
+  } catch (error) {
+    console.error("Database Error:", error);
+    throw new Error("Failed to delete invoice.");
+  }
 }
 
 export async function authenticate(
